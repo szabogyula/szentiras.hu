@@ -1,0 +1,41 @@
+---
+services:
+  app:
+    image: app
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    volumes:
+      - storage:/var/www/html/storage
+    env_file:
+      - ./.env
+    depends_on:
+      database:
+        condition: service_healthy
+  database:
+    image: mariadb
+    env_file:
+      - ./.env
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--su-mysql", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+  sphinx:
+    image: nsign/sphinx-docker:2.2.11
+    volumes:
+      - ./production/sphinx/sphinx.conf.in:/etc/sphinxsearch/sphinx.conf.in:ro
+      - ./sphinx/start.sh:/start.sh:ro
+      - sphinx_data:/var/data
+    env_file:
+      - ./.env
+    depends_on:
+      database:
+        condition: service_healthy
+volumes:
+  db-data:
+  storage:
+  sphinx_data:

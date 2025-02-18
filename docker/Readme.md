@@ -1,82 +1,48 @@
-# Build the image
-Run this from the `<szentiras-repo-root>` folder.
-
-```sh
-docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t szentiras-dev . -f docker/Dockerfile
-```
-
-Your local UID and GID need to be propagated to the image.
-
-# Start the image the first time
-
-This is just for the first start (initialization). Be sure to run this from the Szentiras repo root.
-
-```sh
-docker run -it --name szentiras-dev -v "$(pwd):/app" --net=host szentiras-dev
-
-source docker/init.sh
-```
-
-# Use the image
-
-```sh
-docker start -ai szentiras-dev
-```
-
-Then, in the Docker interactive shell session, you may have to start the MySQL server:
-
-```sh
-service mysql start
-```
-
-Then, you need to start the indexer service:
-
-```
-service sphinxsearch start
-```
-
-To serve the website:
-
-```sh
-php artisan serve --port 1024
-```
-
-To "open a second terminal" to this Docker container:
-
-```sh
-docker exec -it szentiras-dev /bin/bash
-```
-
-To connect to the database setting the right character encoding:
-
-```sh
-mysql -u homestead -p
-# password: secret
-SET character_set_client = 'utf8mb4';
-SET character_set_connection = 'utf8mb4';
-SET character_set_results = 'utf8mb4';
-```
-
-To reindex:
-
-```sh
-indexer --config /etc/sphinxsearch/sphinx.conf --all --rotate
-```
-
-# Why this version of Ubuntu?
-
-Because for this version, Python2 was still available (needed by something else :).
-
-
 # Environments with docker compose
 
 ## Local development environment
 
-The `docker-compose.yml` provides a local development environment.
+The `docker-compose.yml` provides the base stack
 
-Start the stack: `docker compose up -d`
+The `docker-compose.dev.yml` extends the base stack a local development environment.
 
-### The services
+### Usage (TL;DR)
+
+Run all commands from the `docker` directory.
+
+#### Start
+
+Start the stack: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`
+
+#### Stop
+
+Stop the stack: `docker compose -f docker-compose.yml -f docker-compose.dev.yml down`
+
+#### Reset database
+
+Destroy the stack with volume wipe `docker compose -f docker-compose.yml -f docker-compose.dev.yml -v down`
+
+and then start the stack again: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`
+
+#### Migration
+
+`docker compose exec -ti app php artisan migrate -n`
+
+#### Other artisan commands
+
+`docker compose exec -ti app php artisan help`
+
+#### Reindex
+
+`docker compose exec -ti sphinx indexer --all --rotate`
+
+#### Import
+
+#### Open shell terminal in the app
+
+`docker compose exec -ti app bash`
+
+### The details of the services
 
 #### app
 
@@ -107,14 +73,16 @@ In `dev` environment the folder of data files mounted into the container in `pro
 
 A fancy SMTP mail catcher with mail format analyser, and with API for easy testing.
 
-The smtp port is "localhost:1025" or in the docker network: "mailpit:1025". The web ui at "http://localhost:8025".
+The smtp service is at "localhost:1025" and in the docker network: "mailpit:1025".
+
+The web ui at [http://localhost:8025](http://localhost:8025).
 
 #### composer
 
 It installs the php dependencies with the composer.phar that's in the repo root folder.
 Changing the composer.json you should run the service again to install/update the php dependencies.
 
-It runs and exit.
+It runs and exits.
 
 #### node
 
@@ -126,10 +94,6 @@ It runs and exit.
 #### gulp
 
 Compile the assets to public build css js folders. It uses the nodejs and the installed composer artifacts.
-
-#### migrator
-
-Makes the migrations on the database in the starting process. We can also use this cache warm-up and other initial processes.
 
 #### The starting order
 
@@ -159,3 +123,16 @@ With the `depends_on` keywords we can controll the order of the starting process
 | database       | mysql    | 3306                  |
 | mailpit smtp   | smtp     | 1025                  |
 | mailpit web ui | http     | http://localhost:8025 |
+
+### The built images, Dockerfile explanation
+
+**ARG Statements**: Define the versions for Alpine, Node, and Composer.
+**Stage 1 (Node setup)**: Use the specified Node version to create a base image.
+**Stage 2 (Gulp setup)**: Use the specified Alpine version to create a base image, copy Node binaries, and install necessary packages.
+**Stage 3 (Composer installer setup)**: Use the specified Composer version to create a base image.
+**Stage 4 (PHP setup)**: Use the PHP 8.2 Apache image, copy Composer from the previous stage, and install PHP extensions and dependencies.
+**Stage 5 (Gulp builder)**: Use the Gulp setup from Stage 2, copy the PHP application, and run Gulp tasks.
+**Stage 6 (Production setup)**: Use the PHP setup from Stage 4, install additional PHP extensions, and copy built assets from the Gulp builder stage.
+**Stage 7 (Development setup)**: Use the production setup from Stage 6, install development tools and Xdebug, and configure PHP for development.
+
+This structure allows for efficient multi-stage builds, reducing the final image size and ensuring that each stage has the necessary dependencies and configurations.

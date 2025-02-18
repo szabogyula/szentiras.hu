@@ -1,0 +1,42 @@
+---
+services:
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entryPoints.web.address=:80"
+      - "--entryPoints.websecure.address=:443"
+      ## TODO review the following configuration
+      - "--certificatesresolvers.myresolver.acme.email=info@szentiras.eu"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      ## TODO http -> https redirect
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - default
+      - traefik
+  app:
+    build:
+      target: production
+    volumes:
+      - storage:/var/www/html/storage
+    labels:
+      - "traefik.enable=true"
+      ## TODO get host from .env
+      - "traefik.http.routers.app.rule=Host(`szentiras.eu`)"
+      - "traefik.http.routers.app.entrypoints=websecure"
+      - "traefik.http.routers.app.tls.certresolver=myresolver"
+      - "traefik.http.services.app.loadbalancer.server.port=80"
+    networks:
+      - traefik
+      - default
+volumes:
+  letsencrypt:
+networks:
+  traefik:

@@ -1,55 +1,75 @@
-FROM ubuntu:22.04
+# Specify the versions for Alpine, Node, and Composer
+ARG ALPINE_VERSION=3.15 # version with python2
+ARG NODE_VERSION=9.0.0-alpine
+ARG COMPOSER_VERSION=2.2.25
 
-ARG UID=1000
-ARG GID=1000
+# Stage 1: Node setup
+FROM node:${NODE_VERSION} AS node
 
-RUN groupadd -g ${GID} appgroup && \
-    useradd -m -u ${UID} -g appgroup appuser
-
+# Stage 2: Gulp setup
+FROM alpine:${ALPINE_VERSION} AS gulp
+COPY --from=node /usr/local/bin/node /usr/local/bin/
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+RUN apk add python2 make g++ bash vim
+RUN mkdir -p /app
 WORKDIR /app
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Stage 3: Composer installer setup
+FROM composer:2.2.25 AS composer-installer
 
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
+# Stage 4: PHP setup
+FROM php:8.2-apache AS php
+COPY --from=composer-installer /usr/bin/composer /usr/bin/composer
+COPY . /var/www/html
+RUN apt-get update && \
+    apt-get install -y \
+    libpng-dev \
+    libzip-dev
+RUN docker-php-ext-install \
+    zip gd
+RUN /usr/bin/composer install --no-dev --no-interaction
 
-RUN apt update
+# Stage 5: Gulp builder with installed PHP dependencies
+FROM gulp AS gulp-builder
+COPY --from=php /var/www/html /app/
+RUN npm --no-bin-link install
+RUN node_modules/gulp/bin/gulp.js
 
-RUN apt install -y locales && \
-    locale-gen en_US.UTF-8 && \
-    update-locale LANG=en_US.UTF-8
+# Stage 6: Production setup
+FROM php AS production
+RUN docker-php-ext-install \
+    pdo pdo_mysql
 
-RUN apt install -y vim curl make g++
-RUN apt install -y python2
-RUN apt install -y software-properties-common && \
-    add-apt-repository -y ppa:ondrej/php && \
-    add-apt-repository -y ppa:ondrej/nginx-mainline && \
-    apt install -y mysql-server php8.2
+RUN apt install -y \
+    hunspell \
+    hunspell-hu && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN apt install -y curl && \
-    curl -sL https://raw.githubusercontent.com/creationix/nvm/v0.33.11/install.sh -o install_nvm.sh && \
-    bash install_nvm.sh && \
-    export NVM_DIR="$HOME/.nvm" && \
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && \
-    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" && \
-    command -v nvm && \
-    bash -c "source $NVM_DIR/nvm.sh && nvm install v6.2.2"
+COPY --from=gulp-builder /app/public/build /var/www/html/public/build
+COPY --from=gulp-builder /app/public/css /var/www/html/public/css
+COPY --from=gulp-builder /app/public/js /var/www/html/public/js
 
-RUN apt install -y php8.2-xml php8.2-zip php8.2-gd php8.2-mbstring php8.2-mysql php8.2-curl php8.2-xdebug
+RUN mkdir -p bootstrap/cache && chown -R www-data:www-data bootstrap/cache
+RUN chown -R www-data:www-data .
 
-RUN apt install -y hunspell hunspell-hu
+RUN cp /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini
+RUN a2enmod rewrite headers
+COPY docker/sites-available/000-default.conf /etc/apache2/sites-available/000-default.conf
+COPY docker/docker-php-entrypoint /usr/local/bin/docker-php-entrypoint
 
-RUN apt install -y sphinxsearch
-
-RUN apt install -y graphicsmagick
-
-RUN apt install -y texlive
-RUN apt install -y texlive-xetex
-RUN apt install -y texlive-lang-european
-RUN apt install -y fonts-linuxlibertine
-
-COPY ../deploy/local/sphinx/sphinx.conf /etc/sphinxsearch
-RUN sed -i 's/^START=no/START=yes/' /etc/default/sphinxsearch
-
-CMD ["bash"]
+# Stage 7: Development setup
+FROM production AS development
+RUN apt-get update && \
+    apt-get install -y \
+    libonig-dev \
+    git \
+    curl wget \
+    libxml2-dev \
+    unzip \
+    vim \
+    && pecl install xdebug \
+    && docker-php-ext-enable xdebug
+RUN cp /usr/local/etc/php/php.ini-development /usr/local/etc/php/php.ini
+COPY docker/xdebug.ini /usr/local/etc/php/conf.d/xdebug.ini

@@ -1,0 +1,70 @@
+---
+services:
+  app:
+    image: app_dev
+    build:
+      target: development
+      context: ..
+    ports:
+      - "8080:80"
+    volumes:
+      - ../:/var/www/html
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  database:
+    ports:
+      - "3306:3306"
+    volumes:
+      - ../tmp:/docker-entrypoint-initdb.d
+  sphinx:
+    image: nsign/sphinx-docker:2.2.11
+    volumes:
+      - ../deploy/local/sphinx/sphinx.conf.in:/etc/sphinxsearch/sphinx.conf.in:ro
+      - ../docker/sphinx/start.sh:/start.sh:ro
+      - ../var/log/sphinxsearch:/var/log/sphinxsearch/
+      - ../var/sphinx_verse_root_index:/tmp/sphinx_verse_root_index
+      - ../var/sphinx_verse_index:/tmp/sphinx_verse_index
+    env_file:
+      - ./.env
+    depends_on:
+      database:
+        condition: service_healthy
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+  composer_installer:
+    image: composer_installer
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: php
+    volumes:
+      - ../:/var/www/html
+    command: /usr/bin/composer install
+  npm_installer:
+    image: npm_installer
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: gulp-builder
+    volumes:
+      - ../:/app
+    command: npm --no-bin-link install
+  gulp:
+    image: gulp
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: gulp-builder
+    volumes:
+      - ../:/app
+    command: 'node_modules/gulp/bin/gulp.js'
+    depends_on:
+      composer_installer:
+        condition: service_completed_successfully
+      npm_installer:
+        condition: service_completed_successfully
+volumes:
+  db-data:
