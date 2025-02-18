@@ -16,6 +16,6 @@ sed -i "s/__SPHINX_PORT__/${SPHINX_PORT}/g" /etc/sphinxsearch/sphinx.conf
 echo "Prepare sphinx.conf done"
 echo "Start indexer"
 indexer --all
-echo "Start indexer done"
+echo "indexer done"
 echo "Start searchd"
 searchd -c /etc/sphinxsearch/sphinx.conf --nodetach
